@@ -30,8 +30,7 @@
 ```vb
 Dim pdf As New cCraft
 
-Call pdf.NewDocument
-Call pdf.AddPage
+Call pdf.StartDoc
 Call pdf.SetFont(HELVETICA, 12, vbBlue)
 Call pdf.DrawText("Hello world from Craft-PDF", 50, 750)
 
