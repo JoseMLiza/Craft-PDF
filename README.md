@@ -27,32 +27,28 @@
 
 ## 📐 Basic Usage
 
+```vb
 Dim pdf As New cCraft
 
-' Start a new document
 Call pdf.NewDocument
-
-' Add a page
 Call pdf.AddPage
-
-' Set font and size
-Call pdf.SetFont(HELVETICA, 12)
-
-' Draw some text
+Call pdf.SetFont(HELVETICA, 12, vbBlue)
 Call pdf.DrawText("Hello world from Craft-PDF", 50, 750)
 
-' Save to disk
+'-- Save to disk
 Call pdf.Save("C:\MyFile.pdf")
 
-' Save to memory
+'-- Save to memory
 Dim Buff As String
 Buff = pdf.Contents
-
+```
 ## 🖼️ Images
 The class allows you to embed PNG images and reuse them as XObjects, ideal for logos and watermarks that appear on multiple pages.
 
-Call pdf.AddImage("logo.png", "Img1")
+```vb
+Call pdf.AddImage("logo.png", "Img1") 
 Call pdf.DrawImage("Img1", 100, 100, 200, 100)
+```
 
 ## 🗜️ Compression (Optional)
 Craft-PDF can optionally compress PDF stream contents (such as text and image objects) using the FlateDecode filter. This requires one of the following dynamic libraries to be available:
