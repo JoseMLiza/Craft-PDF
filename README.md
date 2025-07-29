@@ -8,7 +8,7 @@
 - ✅ Direct PDF file generation in memory or to disk
 - ✅ Support for multiple pages
 - ✅ Text output using standard PDF fonts (Helvetica, Times, Courier)
-- ✅ Drawing lines, rectangles
+- ✅ Drawing lines and rectangles
 - ✅ PNG image insertion with transparency support (via GDI+)
 - ✅ Optional compression of stream content using `zlib.dll` or `zlibwapi.dll`
 - ✅ Support for reusable `XObject Form` objects and watermarks
