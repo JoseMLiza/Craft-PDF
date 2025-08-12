@@ -77,14 +77,14 @@ Private Sub Demo1()
         '   Font     : Helvetica
         '   FontSize : 10
         '-----------------------------
-    
-        .DrawRectangle 40, -30, .PageWidth - 80, 40, &H544336
+        
+        .DrawRectangle 40, 30, .PageWidth - 80, 40, &H544336
         .SetFont HELVETICA_BOLD, 16, vbWhite
         .DrawText "PDF - VisualBasic 6", 0, 40, T_CENTER
         
         .DrawImage "img1", 45, 80, 80, 80
         .SetFont HELVETICA, 10, &H222222
-        .DrawParagraph FILE("info.txt"), 135, 85, .PageWidth - 176, True, 3
+        .DrawText FILE("info.txt"), 135, 85, T_JUSTIFIED, .PageWidth - 176, 3
         .DrawLine 40, 180, .PageWidth - 40, 180, vbRed, 0.4
         
         .SetFont HELVETICA_BOLD
@@ -221,7 +221,8 @@ Dim Obj As New cCraft
             .SetFont HELVETICA_BOLD, 12
             .DrawText "Contenido página " & .PageCount, 40, 120, T_CENTER, .PageWidth - 80
             .SetFont HELVETICA, 10
-            .DrawParagraph FILE("info.txt"), 40, 150, Obj.PageWidth - 80, True, 8
+            .DrawText FILE("info.txt"), 40, 150, T_JUSTIFIED, .PageWidth - 80, 8
+            
             
             '-- Draw Page Number
             .SetFont HELVETICA, 10
@@ -286,7 +287,7 @@ Public Function RandomJob() As String
     vData = Split("Ingeniero|Doctor|Profesor|Abogado|Contador|Enfermero|Arquitecto|Electricista|Carpintero|Chef|Policía|Soldador|Diseñador|Programador|Mecánico", "|")
     RandomJob = vData(RandomNum(UBound(vData)))
 End Function
-Public Function RandomNum(Max As Long)
+Public Function RandomNum(Max As Long) As Long
     RandomNum = Int(Max * Rnd)
 End Function
 Private Function FILE(Fn As String) As String

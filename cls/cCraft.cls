@@ -18,11 +18,15 @@ Attribute VB_Exposed = False
 '======================================================================================================================
 
 Option Explicit
-#Const ImplCompress = True
+
 Public Enum PDFTextAlignment
     [T_LEFT] = 0
     [T_CENTER] = 1
     [T_RIGHT] = 2
+    [T_JUSTIFIED] = 3
+    '[T_VTOP] = 4
+    '[T_VCENTER] = 8
+    '[T_VBOTTOM] = 16
 End Enum
 Public Enum PDFPageSize
   [PAGE_SIZE_A4] = 0
@@ -131,11 +135,12 @@ End Type
 Private Type tContext
     FontKey     As String
     FontSize    As Single
+    Font        As String       'Tf Operator Buff
     '-- PORTRAIT OR LANDSCAPE
     Cx          As Single
     Cy          As Single
     '--------------------
-    FontChanged As Boolean
+    lTextCy     As Single
 End Type
 
 Event BeginPage(ByVal Num As Long)
@@ -158,16 +163,15 @@ Private m_PageCx        As Single
 Private m_PageCy        As Single
 Private m_Zlib          As ZlibContext
 
+
 Private Sub Class_Initialize()
     Dim aInput(0 To 3) As Long: aInput(0) = 1&
     Call GdiplusStartup(m_gdip, aInput(0), ByVal 0)
     
     '-= Zlib || Zlibwapi =-
-    #If ImplCompress Then
-        Call zlib_init
-    #End If
-    
+    Call zlib_init
     Call StartDoc
+    
 End Sub
 Private Sub Class_Terminate()
     Call GdiplusShutdown(m_gdip)
@@ -187,6 +191,9 @@ Property Get ZlibEnabled() As Boolean
 End Property
 Property Let ZlibEnabled(ByRef Value As Boolean)
     If Value Then Call zlib_init Else m_Zlib.CConv = 0
+End Property
+Property Get LastTextHeight() As Single
+    LastTextHeight = m_Ctx.lTextCy
 End Property
 
 'Public Function InitZlib(ByVal LibPath As String) As Boolean
@@ -250,7 +257,9 @@ Public Sub AddPage(Optional Orientation As PDFPageOrientation)
     pvAddQ m_Kids, ObjectCount & " 0 R" '-- Page Ref
     m_iObject = AddObject(vbNullString) '-- Page Content
     
-    m_Ctx.FontChanged = True
+    'pvAdd "BT " & m_Ctx.FontKey & " " & Str(m_Ctx.FontSize) & " Tf ET" & vbCrLf
+    m_Ctx.Font = m_Ctx.FontKey & " " & Str(m_Ctx.FontSize) & " Tf "
+    
     RaiseEvent BeginPage(PageCount)
     
 End Sub
@@ -265,9 +274,8 @@ On Error GoTo Q
     If Len(m_Strm) Then pvFlushStream m_iObject
     If Left$(Key, 1) <> "/" Then Key = "/" & Key
     
-    AddObject "<< /Type /XObject /Subtype /Form /FormType 1 /BBox [" & Str(xPos) & " " & Str(yPos) & " " & Str(xPos + BoxWidth) & " " & Str(yPos + BoxHeight) & "] "
-    m_iObject = ObjectCount
-    
+    m_iObject = AddObject("<< /Type /XObject /Subtype /Form /FormType 1 /BBox [" & Str(xPos) & " " & Str(yPos) & " " & Str(xPos + BoxWidth) & " " & Str(yPos + BoxHeight) & "] ")
+
     '-- Add Refference to Resource Object
     If CollectionIndexByKey(m_oRes, "/XObject") = 0 Then m_oRes.Add New Collection, "/XObject"
     m_oRes("/XObject").Add ObjectCount & " 0 R", Key
@@ -332,57 +340,105 @@ On Error GoTo Q
     If Not IsMissing(FontSize) Then m_Ctx.FontSize = FontSize
     
     'pvAdd "BT " & m_Ctx.FontKey & " " & m_Ctx.FontSize & " Tf ET" & vbCrLf
-    m_Ctx.FontChanged = True
+    m_Ctx.Font = m_Ctx.FontKey & " " & Str(m_Ctx.FontSize) & " Tf "
     
 Q:
 End Sub
 Public Sub SetTextColor(ByVal Color As Long)
     pvAdd pvRGB(Color) & " rg " & vbCrLf
 End Sub
-Public Sub DrawText(ByVal Text As String, ByVal x As Single, ByVal y As Single, Optional Alignment As PDFTextAlignment, Optional ByVal BoxWidth As Single)
+Public Sub DrawText(ByVal Text As String, ByVal x As Single, ByVal y As Single, Optional Alignment As PDFTextAlignment, Optional ByVal BoxWidth As Single, Optional LineSpacing As Single)
+Dim Block   As Variant
+Dim Word    As Variant
+Dim lNum    As Long
+Dim lnCy    As Single
+Dim Output  As String
+
     
-    '--Fix
+    '-- Fix: y
     If y < 0 Then y = (m_Ctx.Cy + y) - m_Ctx.FontSize Else y = (m_Ctx.Cy - y - m_Ctx.FontSize)
-    If Alignment Then
-        If BoxWidth = 0 Then BoxWidth = m_Ctx.Cx - x
-        Select Case Alignment
-            Case 1: x = x + (BoxWidth - TextWidth(Text)) / 2    'CENTER
-            Case 2: x = x + (BoxWidth - TextWidth(Text))        'RIGHT
-        End Select
-    End If
+    If BoxWidth = 0 Then BoxWidth = m_Ctx.Cx - x
     
-    Dim Out As String
-    If InStr(1, Text, "<tag") Then '-- Format Text
-        Dim Words   As Variant
-        Dim OpenTag As String
+    Dim Line        As String
+    Dim LineCx      As Single
+    Dim WordCx      As Single
+    Dim lx          As Single
+    Dim ly          As Single
+    Dim Bl          As Boolean
+    
+    For Each Block In Split(Text, vbCrLf)
+        Bl = False
+        For Each Word In Split(Block, " ")
         
-        For Each Words In pvParseTags(Text)
-            If IsArray(Words) Then
-                If Words(0) = 1 Then OpenTag = " q " & Words(1) & " (" 'OPEN_TAG
+            WordCx = TextWidth(IIf(Bl, " " & Word, Word))
+            
+            If (LineCx + WordCx) > BoxWidth Then
+                
+                ly = y - (lNum * (m_Ctx.FontSize + LineSpacing))
+                
+                Select Case Alignment
+                    Case 0 'LEFT
+                        If Len(Output) = 0 Then Output = "BT " & m_Ctx.Font & Str(x) & " " & Str(y) & " Td " & Str(m_Ctx.FontSize + LineSpacing) & " TL" & vbCrLf
+                        Output = Output & "(" & pvEsc(Line) & ")Tj T*" & vbCrLf
+                    Case 1 'CENTER
+                        lx = x + (BoxWidth - TextWidth(Line)) / 2
+                        Output = Output & "BT " & m_Ctx.Font & Str(lx) & " " & Str(ly) & " Td (" & pvEsc(Line) & ")Tj ET" & vbCrLf
+                    Case 2 'RIGHT
+                        lx = x + (BoxWidth - TextWidth(Line))
+                        Output = Output & "BT " & m_Ctx.Font & Str(lx) & " " & Str(ly) & " Td (" & pvEsc(Line) & ")Tj ET" & vbCrLf
+                    Case 3 'JUSTIFIED
+                        If Len(Output) = 0 Then Output = "BT " & m_Ctx.Font & Str(x) & " " & Str(y) & " Td " & Str(m_Ctx.FontSize + LineSpacing) & " TL" & vbCrLf
+                        Output = Output & pvJustify(Line, BoxWidth) & " T*" & vbCrLf
+                End Select
+                
+                lNum = lNum + 1
+                Line = Word
+                LineCx = TextWidth(Word)
+                m_Ctx.Font = vbNullString
             Else
-                If Len(OpenTag) Then
-                    Out = Out & OpenTag & pvEsc(CStr(Words)) & ")Tj Q "
-                    OpenTag = vbNullString
-                Else
-                    Out = Out & "(" & pvEsc(CStr(Words)) & ")Tj "
-                End If
+                If Not Bl Then Line = Word Else Line = Line & " " & Word
+                LineCx = LineCx + WordCx
             End If
+            Bl = True
         Next
-    Else
-        Out = Out & "(" & pvEsc(Text) & ")Tj "
-    End If
-    
-    If m_Ctx.FontChanged Then
-        pvAdd "BT " & m_Ctx.FontKey & " " & Str(m_Ctx.FontSize) & " Tf " & Str(x) & " " & Str(y) & " Td " & Out & "ET" & vbCrLf
-        m_Ctx.FontChanged = False
-    Else
-        pvAdd "BT " & Str(x) & " " & Str(y) & " Td " & Out & "ET" & vbCrLf
-    End If
+        
+        '-- Add last line
+        If Len(Line) > 0 Then
+        
+            ly = y - (lNum * (m_Ctx.FontSize + LineSpacing))
+            Select Case Alignment
+                Case 1 'CENTER
+                    lx = x + (BoxWidth - TextWidth(Line)) / 2
+                    Output = Output & "BT " & m_Ctx.Font & Str(lx) & " " & Str(ly) & " Td (" & pvEsc(Line) & ")Tj ET" & vbCrLf
+                Case 2 'RIGHT
+                    lx = x + (BoxWidth - TextWidth(Line))
+                    Output = Output & "BT " & m_Ctx.Font & Str(lx) & " " & Str(ly) & " Td (" & pvEsc(Line) & ")Tj ET" & vbCrLf
+                Case 0, 3 'LEFT, JUSTIFIED
+                    If Len(Output) = 0 Then
+                        Output = "BT " & m_Ctx.Font & Str(x) & " " & Str(y) & " Td (" & pvEsc(Line) & ")Tj ET" & vbCrLf
+                    Else
+                        Output = Output & "(" & pvEsc(Line) & ")Tj" & vbCrLf & "ET" & vbCrLf
+                    End If
+            End Select
+            m_Ctx.Font = vbNullString
+            lNum = lNum + 1
+        End If
+        
+        pvAdd Output
+        Line = vbNullString
+        Output = vbNullString
+        LineCx = 0
+        
+        If Alignment = 0 Or Alignment = 3 Then y = y - (lNum * (m_Ctx.FontSize + LineSpacing))
+        
+    Next
+    m_Ctx.lTextCy = (lNum * (m_Ctx.FontSize + LineSpacing))
     
 End Sub
+
 Public Sub DrawLine(ByVal x1 As Long, ByVal y1 As Long, ByVal x2 As Long, ByVal y2 As Long, Optional Color As Long, Optional LineWidth As Single = 0.5, Optional ByVal DashPatern As String)
     
-    '--Fix y pos
+    '-- Fix: y1 y2
     If y1 < 0 Then y1 = m_Ctx.Cy + y1 Else y1 = m_Ctx.Cy - y1
     If y2 < 0 Then y2 = m_Ctx.Cy + y2 Else y2 = m_Ctx.Cy - y2
     
@@ -398,7 +454,7 @@ End Sub
 Public Sub DrawRectangle(ByVal x As Single, ByVal y As Single, ByVal Width As Single, ByVal Height As Single, Optional FillColor As Variant, Optional BorderColor As Variant, _
                          Optional BorderWidth As Single = 0.5, Optional ByVal DashPatern As String, Optional Radius As Single)
 
-    '--Fix y pos
+    '-- Fix: y
     If y < 0 Then y = m_Ctx.Cy + y - Height Else y = m_Ctx.Cy + (-y) - Height
     
     Dim Out As String
@@ -433,7 +489,7 @@ End Sub
 
 Public Sub DrawImage(ByVal ImageKey As String, ByVal x As Single, ByVal y As Single, ByVal Width As Single, ByVal Height As Single)
 
-    '-- Fix
+    '-- Fix: y
     If y < 0 Then y = (m_Ctx.Cy + y) - Height Else y = (m_Ctx.Cy - y - Height)
     If Left$(ImageKey, 1) <> "/" Then ImageKey = "/" & ImageKey
     
@@ -441,30 +497,12 @@ Public Sub DrawImage(ByVal ImageKey As String, ByVal x As Single, ByVal y As Sin
     pvAdd "q " & Str(Width) & " 0 0 " & Str(Height) & " " & Str(x) & " " & Str(y) & " cm " & ImageKey & " Do Q" & vbCrLf
     
 End Sub
-Public Sub DrawParagraph(ByVal Text As String, ByVal x As Single, ByVal y As Single, ByVal MaxWidth As Single, Optional Justified As Boolean, Optional LineSpacing As Single, Optional OutTextHeight As Single)
-    
-    If IsEmpty(m_FontWidths) Then pvInitFontWidths
-    
-    '--Fix: y
-    If y < 0 Then y = (m_Ctx.Cy + y) - m_Ctx.FontSize Else y = (m_Ctx.Cy - y - m_Ctx.FontSize)
-
-    Dim Out As String
-    If m_Ctx.FontChanged Then Out = m_Ctx.FontKey & " " & Str(m_Ctx.FontSize) & " Tf" & vbCrLf: m_Ctx.FontChanged = False
-    Out = "BT" & vbCrLf & Out & Str(x) & " " & Str(y) & " Td" & vbCrLf & Str(m_Ctx.FontSize + LineSpacing) & " TL" & vbCrLf
-    If InStr(1, Text, "<tag") Then
-        pvAddParagraphF Text, Out, MaxWidth, Justified, LineSpacing, OutTextHeight
-    Else
-        pvAddParagraph Text, Out, MaxWidth, Justified, LineSpacing, OutTextHeight
-    End If
-    Out = Out & "ET" & vbCrLf
-    Call pvAdd(Out)
-End Sub
 Public Sub DrawForm(ByVal FormKey As String)
     If Left$(FormKey, 1) <> "/" Then FormKey = "/" & FormKey
     pvAdd FormKey & " Do" & vbCrLf '/Frm1 Do
 End Sub
 Public Function TextWidth(ByVal Text As String) As Single
-    
+On Error GoTo Q
     If IsEmpty(m_FontWidths) Then pvInitFontWidths
   
     Dim Code    As Integer
@@ -473,39 +511,38 @@ Public Function TextWidth(ByVal Text As String) As Single
     
     For i = 1 To Len(Text)
         Code = Asc(Mid$(Text, i, 1))
-        If Code >= 0 And Code <= 255 Then
+        If Code >= 32 And Code <= 255 Then
             Cx = Cx + m_FontWidths(Code - 32)
         Else
             Cx = Cx + m_FontDefWidth
         End If
     Next i
     TextWidth = (Cx / 1000#) * m_Ctx.FontSize
+Q:
 End Function
-Public Function TextHeight(ByVal Text As String, ByVal MaxWidth As Single, Optional LineSpace As Single) As Single
+Public Function TextHeight(ByVal Text As String, ByVal MaxWidth As Single, Optional LineSpacing As Single) As Single
     
     If IsEmpty(m_FontWidths) Then pvInitFontWidths
-    Dim Words()     As String
-    Dim Line        As String
-    Dim currentY    As Single
-    Dim TestLine    As String
-    Dim LineWidth   As Single
-    Dim i           As Long
     
-    Words = Split(Text, " ")
-    For i = 0 To UBound(Words)
-        If Line = "" Then TestLine = Words(i) Else TestLine = Line & " " & Words(i)
-        LineWidth = TextWidth(TestLine)
-        If LineWidth <= MaxWidth Then
-            Line = TestLine
-        Else
-            currentY = currentY + m_Ctx.FontSize + LineSpace
-            Line = Words(i)
-        End If
+    Dim Block As Variant, Word As Variant
+    Dim Line As String, TestLine    As String
+    Dim lCy As Single
+    
+    For Each Block In Split(Text, vbCrLf)
+        For Each Word In Split(Text, " ")
+            If Line = "" Then TestLine = Word Else TestLine = Line & " " & Word
+            If TextWidth(TestLine) <= MaxWidth Then
+                Line = TestLine
+            Else
+                lCy = lCy + m_Ctx.FontSize + LineSpacing
+                Line = Word
+            End If
+        Next
     Next
     
     '-- Add last line
-    If Len(Line) Then currentY = currentY + m_Ctx.FontSize + LineSpace
-    TextHeight = currentY
+    If Len(Line) Then lCy = lCy + m_Ctx.FontSize + LineSpacing
+    TextHeight = lCy
     
 End Function
 Public Sub SetInfo(Optional Title As String, Optional Autor As String, Optional Producer As String, Optional ByVal CreationDate As String)
@@ -594,12 +631,12 @@ On Error GoTo Q
     ObjectCount = m_Objs.Count
 Q:
 End Function
-Private Function pvErr(Source As String, Desc As String)
+Private Sub pvErr(Source As String, Desc As String)
     Debug.Print TypeName(Me) & "::" & Source & "[ERROR] > " & Desc
-End Function
-Private Function pvAdd(Src As String)
+End Sub
+Private Sub pvAdd(Src As String)
     m_Strm = m_Strm & Src
-End Function
+End Sub
 Private Function pvCompress(Src() As Byte) As Boolean
 On Error GoTo Q
 
@@ -643,12 +680,13 @@ On Error GoTo Q
     
     '-- Add Core Font
     If Not (BF = "Symbol" Or BF = "ZapfDingbats") Then
-        AddObject "<< /Type /Font /Subtype /Type1 /BaseFont /" & BF & " /Encoding /WinAnsiEncoding >>"
+        m_oRes("/Font").Add "<</Type /Font /Subtype /Type1 /BaseFont /" & BF & " /Encoding /WinAnsiEncoding>>", Key
     Else
-        AddObject "<< /Type /Font /Subtype /Type1 /BaseFont /" & BF & " >>"
+        m_oRes("/Font").Add "<</Type /Font /Subtype /Type1 /BaseFont /" & BF & ">>", Key
     End If
     
-    m_oRes("/Font").Add ObjectCount & " 0 R", Key
+    'm_oRes("/Font").Add ObjectCount & " 0 R", Key
+    
     m_uFonts.Add "/" & BF, Key
     pvAddBaseFont = Key
     
@@ -731,11 +769,11 @@ Dim i    As Long
     Next
     pvBuildObj = "<<" & Out & ">>"
 End Function
-Private Function pvAddQ(Src As Variant, Value As Variant)
+Private Sub pvAddQ(Src As Variant, Value As Variant)
     If IsEmpty(Src) Then Src = Array()
     ReDim Preserve Src(UBound(Src) + 1)
     Src(UBound(Src)) = Value
-End Function
+End Sub
 Private Function pvEsc(Str As String) As String
   pvEsc = Replace(Replace(Replace(Str, "\", "\\"), "(", "\("), ")", "\)")
 End Function
@@ -1040,202 +1078,6 @@ Private Function pvRoundRect(x As Single, y As Single, W As Single, H As Single,
             x & " " & Str(Round(y + R, 2)) & " c"                                    ' Esquina inferior izquierda
     pvRoundRect = s
 End Function
-Private Function pvParseTags(ByVal Text As String) As Collection
-Dim oRegEx  As Object
-Dim oExec   As Object
-Dim This    As Variant
-Dim Pos     As Long
-Dim lastPos As Long
-Dim Tmp     As String
-Dim Out     As Collection
-Dim v1      As Variant
-Dim v2      As Variant
-
-
-    Set Out = New Collection
-    Set oRegEx = CreateObject("VBScript.RegExp")
-    With oRegEx
-        .Global = True
-        .IgnoreCase = True
-        .Pattern = "<tag([^>]*)>(.*?)</tag>"
-        Set oExec = .Execute(Text)
-    End With
-    
-    lastPos = 1
-    For Each This In oExec
-        Pos = This.FirstIndex + 1
-        
-        If Pos > lastPos Then
-            Tmp = Mid$(Text, lastPos, Pos - lastPos)
-            Out.Add Tmp
-        End If
-        
-        Tmp = This.SubMatches(1)        ' Extract inner text
-        
-        ReDim v2(0 To 0) '-- ForeColor
-        
-        '-- Parse <tag ...>
-        For Each v1 In Split(Trim(This.SubMatches(0)), " ")
-            v1 = Split(v1, "=")
-            Select Case Trim(v1(0))
-                Case "c": 'v2(0) = "1 0 0 rg" 'v1(1) & " rg"
-                    v2(0) = pvRGB(CLng(v1(1))) & " rg"
-                Case "b"
-            End Select
-        Next
-        
-        Out.Add Array(1, Join(v2, " "))     '-- Add Open Tag
-        Out.Add Tmp                         '-- Add Text
-        Out.Add Array(2, "")                '-- Add Close Tag
-
-        lastPos = Pos + Len(This.Value)
-    Next
-    If lastPos <= Len(Text) Then Out.Add Mid$(Text, lastPos)
-    Set pvParseTags = Out
-End Function
-Private Sub pvAddParagraph(Text As String, Out As String, MaxWidth As Single, Justified As Boolean, LineSpacing As Single, OutCy As Single)
-Dim Line    As String
-Dim LineCx  As Single
-Dim Word    As Variant
-Dim WordCx  As Single
-Dim TestLine As String
-    
-    For Each Word In Split(Text, " ")
-    
-        WordCx = TextWidth(IIf(Line = "", Word, " " & Word))
-        TestLine = IIf(Line = "", Word, Line & " " & Word)
-
-        If (LineCx + WordCx) <= MaxWidth Then
-            Line = TestLine
-            LineCx = LineCx + WordCx
-        Else
-            If Len(Line) > 0 Then
-                If Justified Then
-                    Out = Out & pvJustify(Line, MaxWidth) & " T*" & vbCrLf
-                Else
-                    Out = Out & "(" & pvEsc(Line) & ")Tj T*" & vbCrLf
-                End If
-            End If
-            Line = Word
-            LineCx = TextWidth(Word)
-            OutCy = OutCy + m_Ctx.FontSize + LineSpacing
-        End If
-    Next
-    '-- Add last line
-    If Len(Line) > 0 Then
-        Out = Out & "(" & pvEsc(Line) & ")Tj" & vbCrLf
-        OutCy = OutCy + m_Ctx.FontSize + LineSpacing
-    End If
-End Sub
-Private Sub pvAddParagraphF(Text As String, Out As String, MaxWidth As Single, Justified As Boolean, LineSpacing As Single, OutCy As Single)
-Dim Item As Variant
-Dim Word As Variant
-Dim Buff As String
-Dim Line As String
-Dim Coll As Collection
-Dim bTag    As Boolean
-Dim bOpen   As Boolean
-Dim bNull   As Boolean
-Dim NumSpc  As Long
-Dim JBuff   As String
-
-    If Justified Then Set Coll = New Collection
-    For Each Item In pvParseTags(Text)
-        If Not IsArray(Item) Then
-            For Each Word In Split(Item, " ")
-                If Len(Line) = 0 Then
-                    Line = Word
-                ElseIf bTag Then
-                    Line = Line & Word
-                Else
-                    Line = Line & " " & Word
-                End If
-                If TextWidth(Line) > MaxWidth Then
-                    If bOpen Then
-                        Buff = Buff & ")Tj"
-                        If Justified Then Coll.Add Array("]TJ")
-                        bOpen = False
-                    End If
-                    
-                    '-- Break line
-                    If Not Justified Then
-                        Out = Out & Buff & " T* " & vbCrLf
-                    Else
-                        Dim t_Width As Single: t_Width = pvTextCx(JBuff)
-                        Dim s_Width As Single: s_Width = ((MaxWidth - t_Width) / NumSpc) * (1000 / m_Ctx.FontSize) * -1
-                        
-                        Dim vm  As Variant
-                        Dim Tmp As String
-                        
-                        For Each vm In Coll
-                            If IsArray(vm) Then Tmp = Tmp & vm(0) Else Tmp = Tmp & Str(s_Width) & "(" & vm & ")"
-                        Next
-                        Out = Out & Tmp & " T*" & vbCrLf
-                        Tmp = vbNullString
-                        NumSpc = 0
-                    End If
-                    
-                    '-- New Text line at current Word
-                    Line = Word
-                    JBuff = Word
-                    
-                    Buff = "(" & pvEsc(CStr(Word))
-                    If Justified Then
-                        Set Coll = New Collection
-                        Coll.Add Array("[")
-                        Coll.Add Array("(" & pvEsc(CStr(Word)) & ")")
-                    End If
-                    bOpen = True
-                    OutCy = OutCy + m_Ctx.FontSize + LineSpacing
-                Else
-                    If Not bOpen Then
-                        Buff = Buff & "("
-                        If Justified Then Coll.Add Array("[")
-                        bOpen = True
-                        bTag = True
-                    End If
-                    Buff = IIf(bTag, Buff & pvEsc(CStr(Word)), Buff & " " & pvEsc(CStr(Word)))
-                    If Justified And Len(Word) Then
-                        JBuff = JBuff & Word
-                        If bTag = True And bNull = False Then
-                            Coll.Add Array("(" & pvEsc(CStr(Word)) & ")")
-                        ElseIf (Len(Word) > 0) Or bNull Then
-                            Coll.Add pvEsc(CStr(Word)): NumSpc = NumSpc + 1
-                        End If
-                    End If
-                End If
-                bTag = False
-                bNull = (Len(Word) = 0)
-            Next
-        Else
-            Select Case Item(0)
-                Case 1: 'Init:  q...(   q...[
-                    If bOpen Then '-- Close Previus
-                        Buff = Buff & ")Tj"
-                        If Justified Then Coll.Add Array("]TJ")
-                    End If
-                    Buff = Buff & " q " & Item(1)
-                    If Justified Then Coll.Add Array(" q " & Item(1))
-                    bOpen = False
-                    
-                Case 2: 'End :  )tj Q   ]TJ Q
-                    Buff = Buff & ")Tj Q "
-                    If Justified Then Coll.Add Array("]TJ Q ")
-                    bOpen = False
-            End Select
-            bTag = True
-        End If
-    Next
-
-    '-- Last Line
-    If Len(Buff) > 0 Then
-        If bOpen Then Buff = Buff & ")Tj" & vbCrLf
-        Out = Out & Buff
-        OutCy = OutCy + m_Ctx.FontSize + LineSpacing
-    End If
-End Sub
-
-
 Private Sub pvInitFontWidths()
 On Error GoTo Q:
 
