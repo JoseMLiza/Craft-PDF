@@ -353,7 +353,6 @@ Dim Word    As Variant
 Dim lNum    As Long
 Dim lnCy    As Single
 Dim Output  As String
-
     
     '-- Fix: y
     If y < 0 Then y = (m_Ctx.Cy + y) - m_Ctx.FontSize Else y = (m_Ctx.Cy - y - m_Ctx.FontSize)
@@ -371,11 +370,9 @@ Dim Output  As String
         For Each Word In Split(Block, " ")
         
             WordCx = TextWidth(IIf(Bl, " " & Word, Word))
-            
             If (LineCx + WordCx) > BoxWidth Then
                 
                 ly = y - (lNum * (m_Ctx.FontSize + LineSpacing))
-                
                 Select Case Alignment
                     Case 0 'LEFT
                         If Len(Output) = 0 Then Output = "BT " & m_Ctx.Font & Str(x) & " " & Str(y) & " Td " & Str(m_Ctx.FontSize + LineSpacing) & " TL" & vbCrLf
@@ -404,7 +401,6 @@ Dim Output  As String
         
         '-- Add last line
         If Len(Line) > 0 Then
-        
             ly = y - (lNum * (m_Ctx.FontSize + LineSpacing))
             Select Case Alignment
                 Case 1 'CENTER
@@ -428,9 +424,7 @@ Dim Output  As String
         Line = vbNullString
         Output = vbNullString
         LineCx = 0
-        
         If Alignment = 0 Or Alignment = 3 Then y = y - (lNum * (m_Ctx.FontSize + LineSpacing))
-        
     Next
     m_Ctx.lTextCy = (lNum * (m_Ctx.FontSize + LineSpacing))
     

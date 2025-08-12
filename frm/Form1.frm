@@ -141,14 +141,12 @@ Private Sub Demo1()
         .DrawImage "img4", 200, 475, 50, 50
         .DrawImage "img5", 280, 475, 50, 50
         
-        
         '-- Images --
         .AddImage LoadResData(101, "PNG"), "img1"
         .AddImage LoadResPicture(102, vbResBitmap), "img2"
         .AddImage Me.Icon, "img3"
         .AddImage App.Path & "\img\32bpp_2x2.png", "img4"
         .AddImage App.Path & "\img\001.bmp", "img5"
-        
         
         '-- New Page (Table) --
         .AddPage
